@@ -57,7 +57,9 @@ Sentinel makes that queue drain itself:
 - Devin's API exposes exactly the control points an orchestrator needs: **create with budget and tags**,
   **poll status + `status_detail`** (working / waiting_for_user / finished), **message into a running
   session**, **structured output validated against a schema**, **terminate**, and **ACU consumption** per
-  session. Sentinel uses all of them; nothing here depends on a person watching the Devin UI.
+  session. Sentinel uses all of them; nothing here depends on a person watching the Devin UI. (Personal API keys
+are currently accepted by the v1 endpoints only; `DEVIN_API_VERSION=auto` detects that and falls back,
+at the cost of ACU and `status_detail` data. See *Known limitations*.)
 - Because Devin returns *structured* output, the outcome (`pr_opened` / `no_change_needed` / `blocked`)
   is machine-readable. That is what lets Sentinel close the loop on GitHub and compute real success rates
   instead of "a session ended".
@@ -78,7 +80,7 @@ sentinel/
   observability/        Prometheus metrics, leadership summary, Markdown report, JSON logging
 fake_devin/app.py       a scripted stand-in for the Devin v3 API (happy path, block, fail, no-change)
 scripts/                simulate_webhook.sh (signed synthetic GitHub event), run_local.sh
-tests/                  18 tests: state machine, retries, nudges, timeout, webhook auth/dedupe, scanner
+tests/                  20 tests: state machine, retries, nudges, timeout, webhook auth/dedupe, scanner
 docs/                   architecture.md, issues.md (seeded issues)
 ```
 
@@ -148,7 +150,8 @@ scripts/run_local.sh          # uvicorn with reload, DB in ./data
 | `SESSION_TIMEOUT_MINUTES` | 90 | Terminate + retry/fail. |
 | `POLL_INTERVAL_SECONDS` | 30 | Devin polling cadence. |
 | `ISSUE_SWEEP_INTERVAL_SECONDS` | 300 | Scheduled trigger; 0 disables. |
-| `DEVIN_MODE` | (org default) | `fast` / `lite` / `ultra` override. |
+| `DEVIN_MODE` | (org default) | `fast` / `lite` / `ultra` override (v3 only). |
+| `DEVIN_API_VERSION` | auto | `auto` probes `/v3/self` and falls back to `v1`; or pin `v1` / `v3`. |
 | `GITHUB_DRY_RUN` | 0 | Log GitHub writes instead of performing them. |
 
 ## How you know it is working
@@ -194,8 +197,22 @@ scripts/run_local.sh          # uvicorn with reload, DB in ./data
 - Move triggers into Devin Automations / Terraform once the policy is stable, keeping this service as
   the analytics and escalation layer.
 
+## Known limitations
+
+- **Personal API keys and v3.** At the time of writing an `apk_user_*` key returns 403 on `/v3/self`
+  and every `/v3/organizations/...` route while `/v1/*` works. The client probes once and falls back to
+  v1 (`DEVIN_API_VERSION=auto`). On v1 there is no `acus_consumed` and no `status_detail`, so the cost
+  KPIs read 0 and blocked/working/finished is derived from `status_enum`. A service-user key
+  (`apk_*`, created by an org admin) unlocks v3 and the ACU figures without any code change.
+- **Consumption API.** `/v1/enterprise/consumption` answers "Contact support to enable the consumption
+  API" on this org, so per-session cost cannot be backfilled from there either.
+- **Devin's GitHub access** to the fork is a prerequisite Sentinel cannot verify through the API on v1;
+  if a session cannot push, it ends up `needs_human` with Devin's explanation on the issue.
+
 ## Reference
 
 - Devin API: https://docs.devin.ai/api-reference/overview (v3 OpenAPI: https://docs.devin.ai/v3-openapi.yaml)
-- Endpoints used: `GET /v3/self`, `POST/GET /v3/organizations/{org}/sessions`, `GET …/sessions/{id}`,
+- Endpoints used (v3): `GET /v3/self`, `POST/GET /v3/organizations/{org}/sessions`, `GET …/sessions/{id}`,
   `POST …/sessions/{id}/messages`, `DELETE …/sessions/{id}`, `PUT …/sessions/{id}/tags`.
+- Endpoints used (v1 fallback): `POST/GET /v1/sessions`, `GET/DELETE /v1/sessions/{id}`,
+  `POST /v1/sessions/{id}/message`, `PUT /v1/sessions/{id}/tags`.

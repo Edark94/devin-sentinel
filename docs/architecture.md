@@ -6,7 +6,7 @@
 |---|---|---|
 | Triggers | `sentinel/triggers/` | Turn external events into `Task`s. Webhook (`issues`, `pull_request`), scheduled sweep, scan-results (pip-audit / npm audit → issues), manual API. |
 | Orchestrator | `sentinel/orchestrator.py` | The state machine. One `tick()` = admit queued tasks → poll active sessions → react → reconcile PRs → refresh gauges. |
-| Devin client | `sentinel/devin_client.py` | v3 org API: create/get/list sessions, message, terminate, tags. Retries on 429/5xx with backoff; org id resolved from `/v3/self`. |
+| Devin client | `sentinel/devin_client.py` | v3 org API with v1 fallback: create/get/list sessions, message, terminate, tags. Retries on 429/5xx with backoff; org id resolved from `/v3/self`; v1 `status_enum`/`pull_request` normalised into the v3 vocabulary. |
 | GitHub client | `sentinel/github_client.py` | Issues, labels, comments, PR state. Dry-run aware. |
 | Prompt contract | `sentinel/prompts.py` | The prompt Devin receives + the structured-output JSON schema. |
 | Store | `sentinel/store.py` | SQLite (WAL). Tables: `tasks`, `events` (audit trail), `deliveries` (webhook dedupe). |
@@ -58,7 +58,15 @@ failed.
 | `error`, `suspended` with a limit/error reason | retry once with context, then `failed` |
 | wall-clock > `SESSION_TIMEOUT_MINUTES` | `DELETE /sessions/{id}` → retry / `failed` |
 
-`acus_consumed` is copied on every poll, so cost is visible while the session runs.
+`acus_consumed` is copied on every poll, so cost is visible while the session runs (v3 only; v1 has no
+cost field).
+
+| v1 `status_enum` | normalised to |
+|---|---|
+| `working`, `resumed`, `*_requested*` | `running` / `working` |
+| `blocked` | `running` / `waiting_for_user` |
+| `finished` | `exit` / `finished` |
+| `expired`, `suspended`, `stopped` | `suspended` / `inactivity` or `user_request` (retryable, not an error) |
 
 ## Idempotency and safety
 
