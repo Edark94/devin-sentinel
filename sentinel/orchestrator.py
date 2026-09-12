@@ -118,6 +118,7 @@ class Orchestrator:
                         log.warning("poll failed for %s: %s", task.id, exc)
                     except Exception:  # never let one task break the loop
                         log.exception("unexpected error polling %s", task.id)
+            await self._reconcile_escalated()
             await self._reconcile_prs()
             metrics.refresh_gauges(self.store)
 
@@ -186,9 +187,12 @@ class Orchestrator:
         self.store.upsert_task(task)
 
         # ---- decide -----------------------------------------------------
+        # Order matters. A session that has delivered (structured outcome or a PR) is done even if
+        # Devin is now idle "waiting for the user": on the v1 API a finished-and-idle session reports
+        # status_enum=blocked, and on v3 it reports waiting_for_user. Nudging it would be noise.
         if view.is_budget_exhausted:
             await self._escalate(task, f"Devin stopped: {view.status_detail} (budget {self.cfg.devin_max_acu_per_session} ACU, used {view.acus_consumed:.2f}).", view)
-        elif view.is_finished or (view.is_terminal and not view.is_error):
+        elif self._has_delivered(task, view) or view.is_finished or (view.is_terminal and not view.is_error):
             await self._finish(task, view)
         elif view.is_error:
             await self._fail_or_retry(task, f"session {view.status}/{view.status_detail}")
@@ -200,6 +204,11 @@ class Orchestrator:
             await self._fail_or_retry(task, f"timed out after {self.cfg.session_timeout_minutes} min")
         elif task.state != TaskState.RUNNING:
             await self._transition(task, TaskState.RUNNING, f"devin {view.status}/{view.status_detail}")
+
+    @staticmethod
+    def _has_delivered(task: Task, view: SessionView) -> bool:
+        outcome = (task.structured_output or {}).get("outcome")
+        return outcome in {"pr_opened", "no_change_needed", "blocked"} or (view.is_waiting_for_user and bool(task.pr_url))
 
     def _timed_out(self, task: Task) -> bool:
         return bool(task.session_started_at) and utcnow() - task.session_started_at > timedelta(minutes=self.cfg.session_timeout_minutes)
@@ -269,6 +278,28 @@ class Orchestrator:
         await self._comment(task, body)
 
     # ------------------------------------------------------------------ PR reconciliation
+    async def _reconcile_escalated(self) -> None:
+        """A human may unblock Devin in the session UI; if the session then delivers, close the loop here."""
+        for task in self.store.list_tasks([TaskState.NEEDS_HUMAN]):
+            if not task.session_id or (task.finished_at and utcnow() - task.finished_at > timedelta(hours=48)):
+                continue
+            try:
+                view = await self.devin.get_session(task.session_id)
+            except DevinAPIError as exc:
+                metrics.DEVIN_API_ERRORS.labels(op="get_session").inc()
+                log.warning("reconcile poll failed for %s: %s", task.id, exc)
+                continue
+            pr_url = view.first_pr_url or (view.structured_output or {}).get("pr_url")
+            outcome = (view.structured_output or {}).get("outcome")
+            if outcome in {"pr_opened", "no_change_needed"} or (pr_url and outcome != "blocked"):
+                task.structured_output = view.structured_output or task.structured_output
+                task.pr_url = task.pr_url or pr_url
+                task.acus_consumed = max(task.acus_consumed, view.acus_consumed)
+                task.finished_at = None
+                self.store.upsert_task(task)
+                self._event(task, "task.unblocked", f"session delivered after escalation: {outcome or pr_url}")
+                await self._finish(task, view)
+
     async def _reconcile_prs(self) -> None:
         for task in self.store.list_tasks([TaskState.PR_OPENED]):
             if not task.pr_url:

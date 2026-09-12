@@ -144,8 +144,10 @@ def tags(org: str, sid: str, body: dict[str, Any]):
 
 
 # ---- v1 surface (what personal API keys can use today) ---------------------------------------
-V3_TO_V1_ENUM = {("running", "working"): "working", ("running", "waiting_for_user"): "blocked", ("exit", "finished"): "finished",
-                 ("running", "finished"): "finished", ("error", "error"): "expired", ("suspended", "user_request"): "expired"}
+# Observed on the real v1 API: a session that has delivered and is idle reports status_enum=blocked,
+# exactly like one that is asking a question. Only the structured output / PR tells them apart.
+V3_TO_V1_ENUM = {("running", "working"): "working", ("running", "waiting_for_user"): "blocked", ("exit", "finished"): "blocked",
+                 ("running", "finished"): "blocked", ("error", "error"): "expired", ("suspended", "user_request"): "expired"}
 
 
 def _v1(s: dict[str, Any]) -> dict[str, Any]:

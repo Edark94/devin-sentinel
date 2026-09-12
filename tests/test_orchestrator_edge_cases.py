@@ -82,3 +82,31 @@ async def test_suspended_for_inactivity_without_result_is_retried(orchestrator, 
     await orchestrator.tick()
     t = store.get_task(task.id)
     assert t.attempts == 2 and orchestrator.devin.created == 2
+
+
+async def test_idle_after_delivery_is_finished_not_nudged(orchestrator, store, github):
+    """Real v1 behaviour: after opening the PR Devin sits in `blocked` (waiting for the user)."""
+    out = {"outcome": "pr_opened", "pr_url": "https://github.com/Edark94/superset/pull/9", "summary": "one-line bump", "verification": "pip-audit clean", "risk": "low"}
+    orchestrator.devin = ScriptedDevin([view("running", "waiting_for_user", pull_requests=[{"pr_url": out["pr_url"], "pr_state": None}], structured_output=out)])
+    task = await orchestrator.accept_issue(issue(6), trigger="manual")
+    await orchestrator.tick()
+    await orchestrator.tick()
+    t = store.get_task(task.id)
+    assert t.state == TaskState.PR_OPENED and t.nudges == 0 and orchestrator.devin.messages == []
+    assert "devin:pr-open" in github.labels[6]
+
+
+async def test_escalated_task_is_promoted_when_session_delivers(orchestrator, store, github, settings):
+    settings.max_nudges = 0
+    waiting = view("running", "waiting_for_user")
+    delivered = view("running", "waiting_for_user", pull_requests=[{"pr_url": "https://github.com/Edark94/superset/pull/10", "pr_state": None}],
+                     structured_output={"outcome": "pr_opened", "summary": "done", "verification": "ok", "risk": "low"})
+    orchestrator.devin = ScriptedDevin([waiting, waiting, waiting, delivered])  # tick2 escalates then reconciles (still waiting); tick3 reconciles -> delivered
+    task = await orchestrator.accept_issue(issue(7), trigger="manual")
+    await orchestrator.tick()   # create + first poll -> waiting, no nudges allowed -> needs_human
+    await orchestrator.tick()
+    assert store.get_task(task.id).state == TaskState.NEEDS_HUMAN
+    await orchestrator.tick()   # reconcile sees delivery -> promoted
+    t = store.get_task(task.id)
+    assert t.state == TaskState.PR_OPENED and t.pr_url.endswith("/pull/10")
+    assert any(e.kind == "task.unblocked" for e in store.list_events(task.id))
