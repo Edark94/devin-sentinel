@@ -1,8 +1,12 @@
-"""Thin async client for the Devin v3 organization API.
+"""Thin async client for the Devin API (v3 organization API, with a v1 fallback).
 
 Only the endpoints the orchestrator needs. Reference: https://docs.devin.ai/api-reference/overview
-(spec: https://docs.devin.ai/v3-openapi.yaml). Authentication is a bearer token; the org id is
-resolved once from GET /v3/self when not configured.
+(specs: https://docs.devin.ai/v3-openapi.yaml, https://docs.devin.ai/v1-openapi.yaml).
+
+Personal API keys (apk_user_*) are, at the time of writing, accepted by /v1 but rejected (403) by
+/v3/self and the /v3/organizations endpoints. With DEVIN_API_VERSION=auto the client probes /v3/self
+once and falls back to v1. Both are normalised into the same SessionView; v1 lacks `acus_consumed`
+and `status_detail`, so cost stays 0 and blocked/working/finished is derived from `status_enum`.
 """
 
 from __future__ import annotations
@@ -18,6 +22,24 @@ log = logging.getLogger("sentinel.devin")
 
 # v3 session `status` values that mean the VM is no longer doing work.
 TERMINAL_STATUSES = {"exit", "error", "suspended"}
+
+
+# v1 `status_enum` (or free-text `status`) -> v3 (status, status_detail)
+V1_STATUS_MAP: dict[str, tuple[str, str]] = {
+    "working": ("running", "working"),
+    "running": ("running", "working"),
+    "resumed": ("running", "working"),
+    "resume_requested": ("running", "working"),
+    "resume_requested_frontend": ("running", "working"),
+    "suspend_requested": ("running", "working"),
+    "suspend_requested_frontend": ("running", "working"),
+    "blocked": ("running", "waiting_for_user"),
+    "finished": ("exit", "finished"),
+    "expired": ("suspended", "inactivity"),
+    "suspended": ("suspended", "inactivity"),
+    "stopped": ("suspended", "user_request"),
+    "error": ("error", "error"),
+}
 
 
 class DevinAPIError(RuntimeError):
@@ -72,6 +94,25 @@ class SessionView:
         return None
 
     @classmethod
+    def from_v1_json(cls, d: dict[str, Any]) -> SessionView:
+        """Map the v1 GetSessionResponse (status / status_enum / pull_request) onto the v3 vocabulary."""
+        key = str(d.get("status_enum") or d.get("status") or "").lower()
+        status, detail = V1_STATUS_MAP.get(key, ("running", "working"))
+        pr = d.get("pull_request") or {}
+        prs = [{"pr_url": pr["url"], "pr_state": None}] if pr.get("url") else []
+        return cls(
+            session_id=d["session_id"],
+            url=d.get("url") or f"https://app.devin.ai/sessions/{d['session_id'].removeprefix('devin-')}",
+            status=status,
+            status_detail=detail,
+            acus_consumed=float(d.get("acus_consumed") or 0.0),
+            pull_requests=prs,
+            structured_output=d.get("structured_output"),
+            tags=list(d.get("tags") or []),
+            raw=d,
+        )
+
+    @classmethod
     def from_json(cls, d: dict[str, Any]) -> SessionView:
         return cls(
             session_id=d["session_id"],
@@ -87,8 +128,11 @@ class SessionView:
 
 
 class DevinClient:
-    def __init__(self, api_key: str, base_url: str = "https://api.devin.ai", org_id: str = "", timeout: float = 30.0):
+    def __init__(
+        self, api_key: str, base_url: str = "https://api.devin.ai", org_id: str = "", timeout: float = 30.0, api_version: str = "auto"
+    ):
         self._org_id = org_id
+        self._version = api_version  # auto | v1 | v3
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -127,13 +171,30 @@ class DevinClient:
             return r.json()
         raise DevinAPIError(0, "unreachable")
 
+    async def version(self) -> str:
+        """Resolve which API generation this key can use (cached)."""
+        if self._version == "auto":
+            try:
+                me = await self._request("GET", "/v3/self", retries=1)
+                self._org_id = self._org_id or me.get("org_id") or ""
+                self._version = "v3"
+                log.info("devin api: v3 (%s, org %s)", me.get("principal_type"), self._org_id)
+            except DevinAPIError as exc:
+                if exc.status in (401, 403, 404):
+                    self._version = "v1"
+                    log.warning("devin api: /v3/self -> %s, falling back to v1 (no ACU or status_detail data)", exc.status)
+                else:
+                    raise
+        return self._version
+
     async def org_id(self) -> str:
+        if await self.version() == "v1":
+            raise DevinAPIError(0, "org id is only meaningful for the v3 API")
         if not self._org_id:
             me = await self._request("GET", "/v3/self")
             self._org_id = me.get("org_id") or ""
             if not self._org_id:
-                raise DevinAPIError(0, f"could not resolve org id from /v3/self: {me}")
-            log.info("resolved devin org id %s (%s)", self._org_id, me.get("principal_type"))
+                raise DevinAPIError(0, f"could not resolve org id from /v3/self: {me}; set DEVIN_ORG_ID")
         return self._org_id
 
     # ---- sessions ------------------------------------------------------
@@ -148,6 +209,14 @@ class DevinClient:
         repos: list[str] | None = None,
         devin_mode: str | None = None,
     ) -> SessionView:
+        if await self.version() == "v1":
+            body_v1: dict[str, Any] = {"prompt": prompt, "title": title, "tags": tags, "unlisted": False, "idempotent": False}
+            if max_acu_limit:
+                body_v1["max_acu_limit"] = max_acu_limit
+            if structured_output_schema:
+                body_v1["structured_output_schema"] = structured_output_schema
+            data = await self._request("POST", "/v1/sessions", json=body_v1)
+            return SessionView(session_id=data["session_id"], url=data.get("url") or "", status="new", status_detail=None, acus_consumed=0.0)
         org = await self.org_id()
         body: dict[str, Any] = {
             "prompt": prompt,
@@ -177,11 +246,19 @@ class DevinClient:
         return SessionView.from_json(data)
 
     async def get_session(self, session_id: str) -> SessionView:
+        if await self.version() == "v1":
+            return SessionView.from_v1_json(await self._request("GET", f"/v1/sessions/{session_id}"))
         org = await self.org_id()
         data = await self._request("GET", f"/v3/organizations/{org}/sessions/{session_id}")
         return SessionView.from_json(data)
 
     async def list_sessions(self, tags: list[str] | None = None, first: int = 100) -> list[SessionView]:
+        if await self.version() == "v1":
+            params_v1: dict[str, Any] = {"limit": first}
+            if tags:
+                params_v1["tags"] = tags
+            data = await self._request("GET", "/v1/sessions", params=params_v1)
+            return [SessionView.from_v1_json(x) for x in data.get("sessions", [])]
         org = await self.org_id()
         params: dict[str, Any] = {"first": first}
         if tags:
@@ -190,23 +267,29 @@ class DevinClient:
         return [SessionView.from_json(x) for x in data.get("items", [])]
 
     async def send_message(self, session_id: str, message: str) -> None:
+        if await self.version() == "v1":
+            await self._request("POST", f"/v1/sessions/{session_id}/message", json={"message": message})
+            return
         org = await self.org_id()
         await self._request("POST", f"/v3/organizations/{org}/sessions/{session_id}/messages", json={"message": message})
 
     async def list_messages(self, session_id: str, first: int = 50) -> list[dict[str, Any]]:
+        if await self.version() == "v1":
+            data = await self._request("GET", f"/v1/sessions/{session_id}")
+            return list(data.get("messages") or [])[-first:]
         org = await self.org_id()
         data = await self._request("GET", f"/v3/organizations/{org}/sessions/{session_id}/messages", params={"first": first})
         return list(data.get("items", []))
 
     async def terminate_session(self, session_id: str) -> None:
-        org = await self.org_id()
+        path = f"/v1/sessions/{session_id}" if await self.version() == "v1" else f"/v3/organizations/{await self.org_id()}/sessions/{session_id}"
         try:
-            await self._request("DELETE", f"/v3/organizations/{org}/sessions/{session_id}")
+            await self._request("DELETE", path)
         except DevinAPIError as exc:
             # already exited -> fine
             if exc.status not in (404, 409):
                 raise
 
     async def set_tags(self, session_id: str, tags: list[str]) -> None:
-        org = await self.org_id()
-        await self._request("PUT", f"/v3/organizations/{org}/sessions/{session_id}/tags", json={"tags": tags})
+        path = f"/v1/sessions/{session_id}/tags" if await self.version() == "v1" else f"/v3/organizations/{await self.org_id()}/sessions/{session_id}/tags"
+        await self._request("PUT", path, json={"tags": tags})

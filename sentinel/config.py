@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     devin_api_base: str = Field(default="https://api.devin.ai", alias="DEVIN_API_BASE")
     devin_max_acu_per_session: int = Field(default=10, alias="DEVIN_MAX_ACU_PER_SESSION")
     devin_mode: str = Field(default="", alias="DEVIN_MODE")
+    devin_api_version: str = Field(default="auto", alias="DEVIN_API_VERSION")  # auto | v1 | v3
 
     # GitHub
     github_token: str = Field(default="", alias="GITHUB_TOKEN")

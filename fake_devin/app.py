@@ -143,6 +143,56 @@ def tags(org: str, sid: str, body: dict[str, Any]):
     return {"tags": _sessions[sid]["tags"]}
 
 
+# ---- v1 surface (what personal API keys can use today) ---------------------------------------
+V3_TO_V1_ENUM = {("running", "working"): "working", ("running", "waiting_for_user"): "blocked", ("exit", "finished"): "finished",
+                 ("running", "finished"): "finished", ("error", "error"): "expired", ("suspended", "user_request"): "expired"}
+
+
+def _v1(s: dict[str, Any]) -> dict[str, Any]:
+    v = _view(s)
+    if s["terminated"]:
+        v.update(status="suspended", status_detail="user_request")
+    enum = V3_TO_V1_ENUM.get((v["status"], v["status_detail"]), "working")
+    pr = v["pull_requests"][0]["pr_url"] if v["pull_requests"] else None
+    return {"session_id": v["session_id"], "status": enum.upper() if enum == "working" else enum, "status_enum": enum, "title": v["title"],
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z", "tags": v["tags"],
+            "pull_request": {"url": pr} if pr else None, "structured_output": v["structured_output"], "messages": []}
+
+
+@app.post("/v1/sessions")
+def v1_create(body: dict[str, Any]):
+    v = create(ORG, body)
+    return {"session_id": v["session_id"], "url": v["url"], "is_new_session": True}
+
+
+@app.get("/v1/sessions")
+def v1_list():
+    return {"sessions": [_v1(s) for s in _sessions.values()]}
+
+
+@app.get("/v1/sessions/{sid}")
+def v1_get(sid: str):
+    if sid not in _sessions:
+        raise HTTPException(404, "Session not found")
+    return _v1(_sessions[sid])
+
+
+@app.post("/v1/sessions/{sid}/message")
+def v1_message(sid: str, body: dict[str, Any]):
+    message(ORG, sid, body)
+
+
+@app.delete("/v1/sessions/{sid}")
+def v1_terminate(sid: str):
+    terminate(ORG, sid)
+    return {"status": "ok"}
+
+
+@app.put("/v1/sessions/{sid}/tags")
+def v1_tags(sid: str, body: dict[str, Any]):
+    return tags(ORG, sid, body)
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "sessions": len(_sessions)}

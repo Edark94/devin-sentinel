@@ -33,7 +33,7 @@ def build_app(cfg: Settings | None = None, *, run_background: bool = True) -> Fa
     cfg = cfg or load_settings()
     configure_logging(cfg.log_level)
     store = Store(cfg.db_path)
-    devin = DevinClient(cfg.devin_api_key, cfg.devin_api_base, cfg.devin_org_id)
+    devin = DevinClient(cfg.devin_api_key, cfg.devin_api_base, cfg.devin_org_id, api_version=cfg.devin_api_version)
     gh = GitHubClient(cfg.github_token, cfg.github_repo, cfg.github_api_base, cfg.github_dry_run)
     orch = Orchestrator(cfg, store, devin, gh)
 
