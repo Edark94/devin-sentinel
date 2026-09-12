@@ -18,7 +18,8 @@ on `superset-frontend`). Issue #3 was filed by hand from a `ruff check` run with
 
 ## Proposed by a Devin triage session (2026-09-12, area `superset/sql`, 5 ACU budget, ~5 minutes)
 
-Filed with `devin:triage` for human approval; add `devin:remediate` to hand one to the remediation loop.
+Filed with `devin:triage` for human approval. All three were approved by adding `devin:remediate` and
+remediated by the pipeline the same evening (PRs #18–#20, 3–8 minutes each, no nudges, no retries).
 
 | # | Title | Confidence |
 |---|---|---|
@@ -36,6 +37,12 @@ Filed with `devin:triage` for human approval; add `devin:remediate` to hand one 
 | #6 | [#9](https://github.com/Edark94/superset/pull/9) | 6 min (incl. the nudge bug, see README "Known limitations") |
 | #7 | [#11](https://github.com/Edark94/superset/pull/11) | 4 min |
 | #8 | [#10](https://github.com/Edark94/superset/pull/10) | 8 min |
+| #15 (triage) | [#19](https://github.com/Edark94/superset/pull/19) | 8 min |
+| #16 (triage) | [#18](https://github.com/Edark94/superset/pull/18) | 3 min |
+| #17 (triage) | [#20](https://github.com/Edark94/superset/pull/20) | 5 min |
+
+Totals: 9 issues, 9 PRs, 0 failures, 0 human escalations after the v1 idle-as-blocked fix; median
+time to PR 4.8 minutes. Every PR adds or extends tests; all are open for human review on the fork.
 
 Findings deliberately **not** filed:
 - `paramiko 3.5.1` (CVE-2026-44405): no fixed release yet — the scanner reports it but files nothing.
