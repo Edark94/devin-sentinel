@@ -90,33 +90,38 @@ remediation, verification, confidence). Titles should read like good issue title
 
 
 def render_issue(f: dict[str, Any], session: SessionView, index: int, area: str | None) -> tuple[str, str, list[str]]:
+    """Issue text in the register a colleague would use: the problem, the evidence, what to do, how to check."""
     title = f["title"].strip()
     tag = f"[{f['category']}]"
     if not title.lower().startswith("["):
         title = f"{tag} {title}"
     marker = f"<!-- sentinel:triage:{session.session_id}:{index} -->"
+    files = ", ".join(f"`{p}`" for p in f["files"])
     body = f"""{marker}
-## Problem
 {f['problem'].strip()}
 
-## Evidence
-{f['evidence'].strip()}
+{_as_block(f['evidence'])}
 
-Files: {', '.join(f'`{p}`' for p in f['files'])}
+To fix ({files}): {f['remediation'].strip()}
 
-## Remediation
-{f['remediation'].strip()}
+To check: {f['verification'].strip()}
 
-## Verification
-{f['verification'].strip()}
-
-## Scope
-One pull request limited to the files above. No unrelated changes.
-
----
-Proposed by a Devin triage session ({session.url}){f' scanning `{area}`' if area else ''}; confidence **{f['confidence']}**.
+_Found by a Devin triage session{f' over `{area}`' if area else ''} ({session.url}), confidence {f['confidence']}. Add `devin:remediate` to hand it back to Devin._
 """
     return title, body, ["devin:triage", f["category"]]
+
+
+def _as_block(evidence: str) -> str:
+    """Evidence usually mixes file:line references with code excerpts; keep excerpts fenced, prose as prose."""
+    text = evidence.strip()
+    if "```" in text:
+        return text
+    lines = text.splitlines()
+    prose = [ln for ln in lines if ln and not ln.startswith((" ", "\t"))]
+    code = [ln for ln in lines if ln.startswith((" ", "\t"))]
+    if not code:
+        return text
+    return "\n".join(prose) + "\n\n```python\n" + "\n".join(code) + "\n```"
 
 
 async def wait_for_session(devin: DevinClient, session_id: str, timeout_s: float, poll_s: float) -> SessionView:
