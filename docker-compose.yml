@@ -1,0 +1,22 @@
+# Real mode: Devin + GitHub. Needs .env (see .env.example).
+#   docker compose up --build                       # orchestrator on :8080
+#   docker compose --profile scan run --rm scanner  # one-shot: scan the fork, file labelled issues
+# Simulation mode (no credits, no GitHub writes): docker compose -f docker-compose.sim.yml up --build
+services:
+  sentinel:
+    build: .
+    env_file: .env
+    ports: ["8080:8080"]
+    volumes: ["sentinel-data:/data"]
+    environment:
+      SENTINEL_DB_PATH: /data/sentinel.db
+    restart: unless-stopped
+
+  scanner:
+    build: .
+    env_file: .env
+    profiles: ["scan"]
+    command: ["python", "-m", "sentinel.triggers.scanner"]
+
+volumes:
+  sentinel-data:

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="15">
+<title>devin-sentinel · {{ cfg.repo }}</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#e6e8ee; --muted:#8b93a7; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --info:#58a6ff; --violet:#a371f7; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif }
+  header { display:flex; align-items:baseline; gap:16px; padding:18px 28px; border-bottom:1px solid var(--line) }
+  header h1 { font-size:18px; margin:0 } header .meta { color:var(--muted); font-size:12px }
+  main { padding:20px 28px; display:grid; gap:20px }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px }
+  .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px }
+  .kpi .v { font-size:26px; font-weight:600 } .kpi .l { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px }
+  .panel h2 { margin:0 0 10px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em }
+  table { width:100%; border-collapse:collapse } th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top }
+  th { color:var(--muted); font-weight:500; font-size:12px } tr:last-child td { border-bottom:0 }
+  a { color:var(--info); text-decoration:none } a:hover { text-decoration:underline }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; letter-spacing:.02em }
+  .s-queued{background:#1f2937;color:#cbd5e1} .s-session_created,.s-running{background:#1c2f4a;color:#7cc4ff} .s-blocked{background:#4a3a12;color:#f2cc60}
+  .s-pr_opened{background:#12381f;color:#56d364} .s-merged{background:#0e5a2b;color:#c7f9cc} .s-no_change{background:#1c3b30;color:#8ce0b7}
+  .s-needs_human{background:#4a2a12;color:#f0883e} .s-failed,.s-cancelled{background:#4a1a1a;color:#ff7b72}
+  .muted{color:var(--muted)} .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .grid2 { display:grid; grid-template-columns:2fr 1fr; gap:20px } @media (max-width:1000px){ .grid2{grid-template-columns:1fr} }
+  .bar { height:8px; background:#232834; border-radius:4px; overflow:hidden } .bar i { display:block; height:100%; background:var(--ok) }
+  .ev { padding:5px 0; border-bottom:1px solid var(--line); font-size:12px } .ev:last-child{border:0} .ev .t{color:var(--muted); margin-right:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>devin-sentinel</h1>
+  <span class="meta">repo <a href="https://github.com/{{ cfg.repo }}">{{ cfg.repo }}</a> · trigger <span class="mono">{{ cfg.trigger_label }}</span> · concurrency {{ cfg.max_concurrent }} · budget {{ cfg.acu_budget }} ACU/session · devin {{ cfg.devin_api }}{% if cfg.dry_run %} · <b style="color:var(--warn)">GitHub dry-run</b>{% endif %} · v{{ version }} · auto-refresh 15s</span>
+</header>
+<main>
+  <section class="kpis">
+    <div class="kpi"><div class="v">{{ summary.tasks_total }}</div><div class="l">tasks accepted</div></div>
+    <div class="kpi"><div class="v" style="color:var(--info)">{{ summary.active }}</div><div class="l">active now</div></div>
+    <div class="kpi"><div class="v" style="color:var(--ok)">{{ summary.prs_opened }}</div><div class="l">PRs opened</div></div>
+    <div class="kpi"><div class="v" style="color:var(--ok)">{{ summary.prs_merged }}</div><div class="l">PRs merged</div></div>
+    <div class="kpi"><div class="v" style="color:var(--warn)">{{ summary.needs_human }}</div><div class="l">needs human</div></div>
+    <div class="kpi"><div class="v" style="color:var(--bad)">{{ summary.failed }}</div><div class="l">failed</div></div>
+    <div class="kpi"><div class="v">{{ (summary.success_rate * 100) | round | int if summary.success_rate is not none else '–' }}%</div><div class="l">success rate</div>
+      <div class="bar"><i style="width:{{ (summary.success_rate or 0) * 100 }}%"></i></div></div>
+    <div class="kpi"><div class="v">{{ summary.median_time_to_pr_minutes if summary.median_time_to_pr_minutes is not none else '–' }}<span class="muted" style="font-size:13px"> min</span></div><div class="l">median time to PR</div></div>
+    <div class="kpi"><div class="v">{{ summary.acus_total }}</div><div class="l">ACUs consumed{% if summary.acus_per_pr %} · {{ summary.acus_per_pr }}/PR{% endif %}</div></div>
+  </section>
+
+  <div class="grid2">
+  <section class="panel">
+    <h2>Tasks</h2>
+    <table>
+      <tr><th>Issue</th><th>Category</th><th>State</th><th>Attempt</th><th>ACUs</th><th>Duration</th><th>Links</th></tr>
+      {% for t in tasks %}
+      <tr>
+        <td><a href="{{ t.issue_url }}">#{{ t.issue_number }}</a> {{ t.issue_title[:70] }}<div class="muted mono">{{ t.trigger }} · {{ t.created_at[:16].replace('T',' ') }}</div></td>
+        <td>{{ t.category }}</td>
+        <td><span class="pill s-{{ t.state }}">{{ t.state }}</span>{% if t.last_error and t.state in ['failed','needs_human'] %}<div class="muted" style="font-size:11px;max-width:260px">{{ t.last_error[:140] }}</div>{% endif %}</td>
+        <td>{{ t.attempts }}{% if t.nudges %} <span class="muted">({{ t.nudges }} nudge{{ 's' if t.nudges > 1 }})</span>{% endif %}</td>
+        <td>{{ '%.2f' | format(t.acus_consumed) }}</td>
+        <td>{% if t.duration_seconds %}{{ (t.duration_seconds / 60) | round | int }} min{% else %}–{% endif %}</td>
+        <td>{% if t.session_url %}<a href="{{ t.session_url }}">session</a>{% endif %} {% if t.pr_url %}· <a href="{{ t.pr_url }}">PR{% if t.pr_state %} ({{ t.pr_state }}){% endif %}</a>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No tasks yet. Label an issue <span class="mono">{{ cfg.trigger_label }}</span> or run the scanner.</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+  <section class="panel">
+    <h2>By category</h2>
+    <table><tr><th>Category</th><th>Tasks</th><th>PRs</th><th>Failed</th><th>Human</th></tr>
+    {% for c, v in summary.by_category.items() %}<tr><td>{{ c }}</td><td>{{ v.total }}</td><td>{{ v.prs }}</td><td>{{ v.failed }}</td><td>{{ v.needs_human }}</td></tr>{% endfor %}
+    </table>
+    <h2 style="margin-top:18px">Pipeline</h2>
+    <table>{% for s, n in summary.by_state.items() %}{% if n %}<tr><td><span class="pill s-{{ s }}">{{ s }}</span></td><td>{{ n }}</td></tr>{% endif %}{% endfor %}</table>
+    <h2 style="margin-top:18px">Recent events</h2>
+    {% for e in events %}<div class="ev"><span class="t mono">{{ e.ts[11:19] }}</span><b>{{ e.kind }}</b> <span class="muted">{{ e.task_id.split('#')[-1] | replace('', '#', 1) }}</span> {{ e.detail[:110] }}</div>{% endfor %}
+  </section>
+  </div>
+  <p class="muted" style="font-size:12px">JSON: <a href="/api/summary">/api/summary</a> · <a href="/api/tasks">/api/tasks</a> · <a href="/api/events">/api/events</a> · Prometheus: <a href="/metrics">/metrics</a> · Markdown: <a href="/report">/report</a></p>
+</main>
+</body>
+</html>

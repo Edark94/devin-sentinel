@@ -1,0 +1,30 @@
+[project]
+name = "devin-sentinel"
+version = "0.1.0"
+description = "Event-driven remediation pipeline: scan findings and GitHub issues -> Devin sessions -> pull requests, with observability."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "jinja2>=3.1",
+    "prometheus-client>=0.20",
+    "pip-audit>=2.7",
+    "python-json-logger>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21", "ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+include = ["sentinel*", "fake_devin*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

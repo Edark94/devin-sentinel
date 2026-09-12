@@ -1,0 +1,29 @@
+# Simulation mode: the orchestrator against a scripted fake Devin, GitHub writes logged only.
+#   docker compose -f docker-compose.sim.yml up --build
+#   scripts/simulate_webhook.sh 101 [ok|block|fail|nochange]
+services:
+  fake-devin:
+    build: .
+    command: ["uvicorn", "fake_devin.app:app", "--host", "0.0.0.0", "--port", "8081"]
+    environment:
+      FAKE_DEVIN_SPEED: "15"     # seconds per simulated phase
+    ports: ["8081:8081"]
+
+  sentinel:
+    build: .
+    depends_on: [fake-devin]
+    ports: ["8080:8080"]
+    environment:
+      DEVIN_API_KEY: fake
+      DEVIN_API_BASE: http://fake-devin:8081
+      GITHUB_REPO: Edark94/superset
+      GITHUB_DRY_RUN: "1"
+      GITHUB_WEBHOOK_SECRET: ""
+      ISSUE_SWEEP_INTERVAL_SECONDS: "0"
+      POLL_INTERVAL_SECONDS: "5"
+      MAX_CONCURRENT_SESSIONS: "3"
+      SENTINEL_DB_PATH: /data/sentinel.db
+    volumes: ["sentinel-sim-data:/data"]
+
+volumes:
+  sentinel-sim-data:
