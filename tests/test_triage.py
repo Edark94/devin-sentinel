@@ -77,4 +77,4 @@ async def test_triage_auto_adds_remediation_label(settings, github, store):
 def test_render_issue_prefixes_category_when_missing():
     view = SessionView(session_id="s", url="https://app.devin.ai/sessions/s", status="exit", status_detail="finished", acus_consumed=0)
     title, body, _labels = render_issue({**FINDING, "title": "no prefix"}, view, 1, "superset/sql")
-    assert title == "[code-quality] no prefix" and "Proposed by a Devin triage session" in body and "`superset/sql`" in body
+    assert title == "[code-quality] no prefix" and "Found by a Devin triage session" in body and "`superset/sql`" in body
