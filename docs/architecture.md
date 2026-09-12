@@ -4,7 +4,7 @@
 
 | Component | File | Role |
 |---|---|---|
-| Triggers | `sentinel/triggers/` | Turn external events into `Task`s. Webhook (`issues`, `pull_request`), scheduled sweep, scan-results (pip-audit / npm audit → issues), manual API. |
+| Triggers | `sentinel/triggers/` | Turn external events into `Task`s. Webhook (`issues`, `pull_request`), scheduled sweep, scan-results (pip-audit / npm audit → issues), Devin triage (read-only session → proposed issues), manual API. |
 | Orchestrator | `sentinel/orchestrator.py` | The state machine. One `tick()` = admit queued tasks → poll active sessions → react → reconcile PRs → refresh gauges. |
 | Devin client | `sentinel/devin_client.py` | v3 org API with v1 fallback: create/get/list sessions, message, terminate, tags. Retries on 429/5xx with backoff; org id resolved from `/v3/self`; v1 `status_enum`/`pull_request` normalised into the v3 vocabulary. |
 | GitHub client | `sentinel/github_client.py` | Issues, labels, comments, PR state. Dry-run aware. |
@@ -13,6 +13,17 @@
 | Observability | `sentinel/observability/` | Prometheus metrics, leadership summary, Markdown report, JSON logs. |
 | Web | `sentinel/main.py`, `templates/dashboard.html` | FastAPI: `/webhooks/github`, `/api/*`, `/`, `/report`, `/metrics`, `/healthz`. |
 | Fake Devin | `fake_devin/app.py` | Scripted v3 API stand-in for tests and demos. |
+
+## Two session types
+
+| Session | Started by | Budget | Output | What Sentinel does with it |
+|---|---|---|---|---|
+| **Remediation** | a labelled issue | `DEVIN_MAX_ACU_PER_SESSION` | PR + structured outcome | labels/comments on the issue, PR reconciliation, KPIs |
+| **Triage** | `POST /api/triage` / CLI (or a schedule) | `--max-acu` (default 5) | structured findings (title, category, files, evidence, remediation, verification, confidence) | files one issue per finding, labelled `devin:triage` + category; `--auto` adds `devin:remediate` so the remediation loop starts immediately |
+
+Both are ordinary Devin sessions with a JSON schema for `structured_output`; the difference is the
+prompt and what the orchestrator does with the result. Triage runs are recorded in the events table
+under `triage:<session_id>` and show up in the dashboard feed.
 
 ## Task lifecycle
 

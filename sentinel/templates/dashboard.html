@@ -76,7 +76,7 @@
     <h2 style="margin-top:18px">Pipeline</h2>
     <table>{% for s, n in summary.by_state.items() %}{% if n %}<tr><td><span class="pill s-{{ s }}">{{ s }}</span></td><td>{{ n }}</td></tr>{% endif %}{% endfor %}</table>
     <h2 style="margin-top:18px">Recent events</h2>
-    {% for e in events %}<div class="ev"><span class="t mono">{{ e.ts[11:19] }}</span><b>{{ e.kind }}</b> <span class="muted">{{ e.task_id.split('#')[-1] | replace('', '#', 1) }}</span> {{ e.detail[:110] }}</div>{% endfor %}
+    {% for e in events %}<div class="ev"><span class="t mono">{{ e.ts[11:19] }}</span><b>{{ e.kind }}</b> <span class="muted">{{ '#' ~ e.task_id.split('#')[-1] if '#' in e.task_id else e.task_id }}</span> {{ e.detail[:110] }}</div>{% endfor %}
   </section>
   </div>
   <p class="muted" style="font-size:12px">JSON: <a href="/api/summary">/api/summary</a> · <a href="/api/tasks">/api/tasks</a> · <a href="/api/events">/api/events</a> · Prometheus: <a href="/metrics">/metrics</a> · Markdown: <a href="/report">/report</a></p>

@@ -37,7 +37,9 @@ over branch, fix, verify, PR, and follow-up. The findings pile up; the audit rep
 Sentinel makes that queue drain itself:
 
 1. **Scan → issue.** `pip-audit` and `npm audit` run against the repo. Each fixable finding becomes a
-   GitHub issue with the advisory, the manifest, the fixed version, and a verification recipe.
+   GitHub issue with the advisory, the manifest, the fixed version, and a verification recipe. For what
+   scanners cannot see, a **triage session** has Devin read an area of the code and propose issues with
+   file:line evidence, a remediation plan and a verification recipe; a human approves them with a label.
 2. **Issue → Devin session.** The moment an issue carries the `devin:remediate` label (from the scanner,
    a human, or a sweep), Sentinel opens a Devin session with a hardened prompt, a structured-output
    contract, an ACU budget, and the fork pinned as the only allowed target.
@@ -77,10 +79,11 @@ sentinel/
   triggers/webhook.py   HMAC verification, issues / pull_request events
   triggers/sweep.py     scheduled trigger: pick up labelled issues the webhook missed
   triggers/scanner.py   pip-audit + npm audit → grouped, deduplicated remediation issues
+  triggers/triage.py    Devin-driven discovery: read-only session → structured findings → proposed issues
   observability/        Prometheus metrics, leadership summary, Markdown report, JSON logging
 fake_devin/app.py       a scripted stand-in for the Devin v3 API (happy path, block, fail, no-change)
 scripts/                simulate_webhook.sh (signed synthetic GitHub event), run_local.sh
-tests/                  20 tests: state machine, retries, nudges, timeout, webhook auth/dedupe, scanner
+tests/                  26 tests: state machine, retries, nudges, timeout, webhook auth/dedupe, scanner
 docs/                   architecture.md, issues.md (seeded issues)
 ```
 
@@ -127,6 +130,7 @@ Then choose your trigger(s):
 | **Sweep** (scheduled) | Enabled by default (`ISSUE_SWEEP_INTERVAL_SECONDS=300`): every 5 min Sentinel lists open issues with `devin:remediate` and accepts any it does not track. | no |
 | **Scanner** (scan results) | `docker compose --profile scan run --rm scanner` runs pip-audit + npm audit against the fork and files labelled issues → picked up by webhook/sweep. `--dry-run` to preview. | no |
 | **Manual** | `curl -X POST localhost:8080/api/tasks/from-issue/<n>` or just add the label in the GitHub UI. | no |
+| **Triage** (Devin-driven discovery) | `python -m sentinel.triggers.triage --area superset/sql --max-issues 3` or `POST /api/triage?area=...`. One read-only Devin session explores the code and returns structured findings; Sentinel files them as issues labelled `devin:triage` for a human to approve with `devin:remediate` (`--auto` skips approval). | no |
 
 Watch http://localhost:8080. Each task shows the Devin session link, attempt count, nudges, ACUs, and the
 PR once it exists. The issue itself gets the same story as comments and labels
@@ -188,8 +192,10 @@ scripts/run_local.sh          # uvicorn with reload, DB in ./data
 
 - Feed it from the tools the customer already has: Dependabot alerts / GitHub code scanning webhooks,
   Snyk or Wiz findings, SonarQube quality gates, Jira tickets in a "ready for automation" column.
-- Let Devin review Devin: a second session type that reviews the PR against the issue and CI results
+- Let Devin review Devin: a third session type that reviews the PR against the issue and CI results
   and posts a review; only PRs that pass go to a human.
+- Schedule triage per subsystem (weekly, rotating areas) so discovery is continuous, and track the
+  approval rate of proposed issues as a quality signal for the triage prompt.
 - Post-merge verification: re-run the scanner after merge and auto-close the issue when the finding is gone.
 - Budgets by category and repository; weekly `/report` posted to Slack; SLOs on time-to-PR.
 - Multi-repo: the orchestrator is already keyed by `repo#issue`; add a repo→settings map and playbooks

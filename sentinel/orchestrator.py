@@ -52,6 +52,7 @@ LABEL_DEFINITIONS = {
     "devin:done": ("0e8a16", "Remediated (merged or no change needed)"),
     "devin:needs-human": ("d93f0b", "Devin needs a decision from a human"),
     "devin:failed": ("b60205", "Automated remediation failed"),
+    "devin:triage": ("6f42c1", "Proposed by a Devin triage session; add devin:remediate to approve"),
     "security": ("ee0701", "Security finding"),
     "dependencies": ("0366d6", "Dependency upgrade"),
     "code-quality": ("bfd4f2", "Code quality"),

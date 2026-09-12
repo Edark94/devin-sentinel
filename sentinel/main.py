@@ -23,6 +23,7 @@ from .observability.report import render as render_report
 from .orchestrator import LABEL_DEFINITIONS, Orchestrator
 from .store import Store
 from .triggers.sweep import sweep_once
+from .triggers.triage import run_triage
 from .triggers.webhook import handle_event, verify_signature
 
 log = logging.getLogger("sentinel.main")
@@ -92,6 +93,18 @@ def build_app(cfg: Settings | None = None, *, run_background: bool = True) -> Fa
     @app.post("/api/sweep")
     async def manual_sweep():
         return {"accepted": await sweep_once(gh, orch, cfg.trigger_label)}
+
+    @app.post("/api/triage")
+    async def start_triage(area: str | None = None, max_issues: int = 3, auto: bool = False, max_acu: int = 5):
+        """Discovery trigger: one Devin session explores the repo and its findings become issues (runs in background)."""
+        async def _job():
+            try:
+                filed = await run_triage(cfg, devin, gh, store, area=area, max_issues=max_issues, auto=auto, max_acu=max_acu, dry_run=False)
+                log.info("triage finished: %d issue(s) filed", len(filed))
+            except Exception:
+                log.exception("triage failed")
+        asyncio.create_task(_job())
+        return {"status": "started", "area": area, "max_issues": max_issues, "auto": auto}
 
     @app.post("/api/tick")
     async def manual_tick():
