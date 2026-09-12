@@ -92,11 +92,16 @@ class Orchestrator:
             category=next((c for c in CATEGORY_LABELS if c in labels), "general"),
             trigger=trigger,
         )
-        if existing:  # re-trigger of a failed / needs-human task: keep history, reset attempt counters
-            task.attempts = existing.attempts
+        # A re-trigger of a failed / needs-human task starts with a fresh attempt budget; the old
+        # sessions stay in the events table for history.
         self.store.upsert_task(task)
         metrics.TASKS_TOTAL.labels(trigger=trigger).inc()
-        await self._transition(task, TaskState.QUEUED, f"accepted via {trigger}")
+        metrics.TRANSITIONS_TOTAL.labels(to_state=TaskState.QUEUED.value).inc()
+        self._event(task, "task.state", f"{'re-' if existing else ''}accepted via {trigger} -> queued")
+        try:
+            await self.gh.set_status_label(task.issue_number, STATUS_LABELS[TaskState.QUEUED], ALL_STATUS_LABELS)
+        except RuntimeError as exc:
+            log.warning("label update failed for %s: %s", task.id, exc)
         return task
 
     # ------------------------------------------------------------------ tick
@@ -142,7 +147,6 @@ class Orchestrator:
                 structured_output_schema=STRUCTURED_OUTPUT_SCHEMA,
                 repos=[f"https://github.com/{self.cfg.github_repo}"],
                 devin_mode=self.cfg.devin_mode or None,
-                idempotent=False,
             )
         except DevinAPIError as exc:
             metrics.DEVIN_API_ERRORS.labels(op="create_session").inc()
@@ -182,7 +186,9 @@ class Orchestrator:
         self.store.upsert_task(task)
 
         # ---- decide -----------------------------------------------------
-        if view.is_finished or (view.is_terminal and not view.is_error):
+        if view.is_budget_exhausted:
+            await self._escalate(task, f"Devin stopped: {view.status_detail} (budget {self.cfg.devin_max_acu_per_session} ACU, used {view.acus_consumed:.2f}).", view)
+        elif view.is_finished or (view.is_terminal and not view.is_error):
             await self._finish(task, view)
         elif view.is_error:
             await self._fail_or_retry(task, f"session {view.status}/{view.status_detail}")
@@ -218,7 +224,9 @@ class Orchestrator:
         task.finished_at = utcnow()
         out = task.structured_output or {}
         outcome = out.get("outcome")
-        if task.pr_url:
+        if outcome == "blocked":
+            await self._escalate(task, out.get("summary", "Devin reported it is blocked."), view)
+        elif task.pr_url:
             if task.state != TaskState.PR_OPENED:
                 if task.duration_seconds:
                     metrics.TIME_TO_PR.observe(task.duration_seconds)
@@ -228,8 +236,6 @@ class Orchestrator:
             await self._transition(task, TaskState.NO_CHANGE, out.get("summary", ""))
             await self._comment(task, f"✅ **Devin concluded no change is needed.**\n\n{out.get('summary', '')}\n\n"
                                       f"Verification: {out.get('verification', '-')}\n\nSession: {task.session_url}")
-        elif outcome == "blocked":
-            await self._escalate(task, out.get("summary", "Devin reported it is blocked."), view)
         else:
             # finished without a PR and without a usable structured output -> treat as failure (retryable)
             await self._fail_or_retry(task, f"session ended ({view.status}/{view.status_detail}) without a PR or a structured outcome")
@@ -289,7 +295,7 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ helpers
     async def _transition(self, task: Task, state: TaskState, detail: str = "") -> None:
-        if task.state == state and state != TaskState.QUEUED:
+        if task.state == state:
             return
         old = task.state
         task.state = state

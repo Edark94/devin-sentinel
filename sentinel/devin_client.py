@@ -59,6 +59,12 @@ class SessionView:
         return self.status == "error" or (self.status == "suspended" and self.status_detail not in {None, "inactivity", "user_request", "finished"})
 
     @property
+    def is_budget_exhausted(self) -> bool:
+        return self.status == "suspended" and (self.status_detail or "").endswith(
+            ("usage_limit_exceeded", "out_of_credits", "out_of_quota", "no_quota_allocation", "payment_declined", "total_session_limit_exceeded")
+        )
+
+    @property
     def first_pr_url(self) -> str | None:
         for pr in self.pull_requests:
             if pr.get("pr_url"):
@@ -141,14 +147,12 @@ class DevinClient:
         structured_output_schema: dict[str, Any] | None = None,
         repos: list[str] | None = None,
         devin_mode: str | None = None,
-        idempotent: bool = True,
     ) -> SessionView:
         org = await self.org_id()
         body: dict[str, Any] = {
             "prompt": prompt,
             "title": title,
             "tags": tags,
-            "unlisted": False,
         }
         if max_acu_limit:
             body["max_acu_limit"] = max_acu_limit
@@ -159,8 +163,6 @@ class DevinClient:
             body["repos"] = repos
         if devin_mode:
             body["devin_mode"] = devin_mode
-        if idempotent:
-            body["idempotent"] = True
         try:
             data = await self._request("POST", f"/v3/organizations/{org}/sessions", json=body)
         except DevinAPIError as exc:

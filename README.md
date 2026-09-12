@@ -78,7 +78,7 @@ sentinel/
   observability/        Prometheus metrics, leadership summary, Markdown report, JSON logging
 fake_devin/app.py       a scripted stand-in for the Devin v3 API (happy path, block, fail, no-change)
 scripts/                simulate_webhook.sh (signed synthetic GitHub event), run_local.sh
-tests/                  14 tests: state machine, retries, nudges, timeout, webhook auth/dedupe, scanner
+tests/                  18 tests: state machine, retries, nudges, timeout, webhook auth/dedupe, scanner
 docs/                   architecture.md, issues.md (seeded issues)
 ```
 
@@ -86,7 +86,7 @@ docs/                   architecture.md, issues.md (seeded issues)
 
 ### 0. Prerequisites
 - Docker + Docker Compose.
-- A Devin API key (`app.devin.ai → Settings → API keys`; personal `apk_user_*` or service `apk_*`).
+- A Devin API key (`app.devin.ai → Settings → API keys`; personal `apk_user_*` or service `apk_*`). If `GET /v3/self` returns no `org_id` for your key (multi-org accounts), set `DEVIN_ORG_ID` too.
 - Devin's GitHub integration installed on the fork (so it can push branches and open PRs).
 - A GitHub token with `issues:write` on the fork (for comments/labels; the scanner also needs it).
 
