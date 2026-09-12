@@ -1,29 +1,14 @@
-## Finding
-Running the current ruff release (0.16.x) with the repository's own `[tool.ruff]` configuration reports:
+Ran the latest ruff (0.16.x) against the repo with our own config and it flags this in the StarRocks dialect:
 
 ```
 superset/sql/dialects/starrocks.py:132:60: B023 Function definition does not bind loop variable `keyword`
 ```
 
-The offending code:
-
 ```python
-**{
-    keyword: (lambda keyword: lambda self: exp.var(keyword))(keyword)
-    for keyword in _STARROCKS_AGGREGATE_COLUMN_CONSTRAINTS
-},
+keyword: (lambda keyword: lambda self: exp.var(keyword))(keyword)
+for keyword in _STARROCKS_AGGREGATE_COLUMN_CONSTRAINTS
 ```
 
-The immediately-invoked outer lambda does bind the value correctly at runtime, but it does so by shadowing the comprehension variable, which is exactly the pattern B023 exists to flag and which every reader has to stop and reason about.
+It works at runtime because the outer lambda is called immediately, but it does so by shadowing the comprehension variable, which is exactly what B023 is warning about and it makes everyone stop and think. Would be nicer with a small named helper or `functools.partial` instead of the double lambda, no `noqa`.
 
-## Remediation
-- [ ] Rewrite the parser-map construction so the binding is explicit and lint-clean, e.g. a small named helper (`def _var_parser(keyword: str) -> Callable[..., exp.Var]: return lambda self: exp.var(keyword)`) or `functools.partial`.
-- [ ] Behaviour must be identical: each keyword in `_STARROCKS_AGGREGATE_COLUMN_CONSTRAINTS` still maps to a parser returning `exp.var(<that keyword>)`.
-- [ ] Do not add a `# noqa`; fix the construct.
-
-## Verification
-- `ruff check superset/sql/dialects/starrocks.py` reports no B023.
-- `pytest tests/unit_tests/sql/dialects/ -q` passes (add a focused test for the aggregate-constraint parsing if none covers it).
-
-## Scope
-Single file. No other lint fixes, no reformatting of unrelated code.
+Behaviour should stay the same (each keyword still maps to a parser returning `exp.var(keyword)`). ruff should be clean on the file afterwards and the dialect tests should pass, add a small test if nothing covers this.
